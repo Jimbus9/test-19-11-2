@@ -46,5 +46,11 @@
     "wss://relay.snort.social",
     "wss://nostr-pub.wellorder.net",
     "wss://relay.nostr.bg"
-  ]
+  ],
+  "home": {
+    "url": "https://jimbus9.github.io/test-19-11-2/crowdlocks/test-19-11-2-test.json",
+    "signatures": {
+      "028bdb1c44e09203111373d71dd0615e4acbe3e9db34c9eb2bebf589fc2abfc726": "J6dlW8ATe12/C+MMIs+ptm4ceEcQfFD6ixjAjGhmxYDkLYBaJkt0bC02J393cfQMXGzPIY8t2I/jHFbVqfe3SHA="
+    }
+  }
 }

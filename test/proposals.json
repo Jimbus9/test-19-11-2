@@ -1,0 +1,22 @@
+{
+  "format": "crowdlock-proposals/1",
+  "instance": "d0797a708f4ce82e7e0505da58ad1009065bd4784139672ecf3c9db7f4d77dc6",
+  "proposals": [
+    {
+      "title": "Testing new uodate",
+      "text": "To me for a test",
+      "destination": "tb1q63zju9hpvfqhu8mw4wr8fqq800zt9jycx97lsz",
+      "requires": 1000,
+      "currency": "GBP",
+      "opens": "2026-11-19T18:24:37Z",
+      "closes": "2026-12-03T18:24:37Z",
+      "settles_by": "2026-12-10T18:24:37Z",
+      "hash": "b8c4e1167530f0159af42d3f7cec53fae0bbc3f74d5fd0d68e454216c36d72cc",
+      "target": {
+        "sats": 180000,
+        "rate": "1 BTC = 5555.56 GBP",
+        "at": "2026-11-19T18:24:37Z"
+      }
+    }
+  ]
+}

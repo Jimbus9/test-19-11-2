@@ -34,7 +34,8 @@
   "max_commitment_fee": 0.01,
   "register": {
     "registrations": "test/registrations.json",
-    "destinations": "test/destinations.json"
+    "destinations": "test/destinations.json",
+    "proposals": "test/proposals.json"
   },
   "chain_api": "https://mempool.space/testnet4/api",
   "relays": [

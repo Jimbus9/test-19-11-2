@@ -1,0 +1,37 @@
+# Checks your Crowdlock file whenever it or a declaration changes.
+#
+# If the file doesn't check out (most often: a new version of the declaration
+# whose fingerprint doesn't match its text), this turns red and GitHub emails
+# whoever pushed the change. Without it, the relay inbox would skip your
+# Crowdlock on every pass and no signature or lock would reach the register
+# until someone noticed.
+
+name: Check the Crowdlock file
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crowdlocks/**"
+      - "spec/**"
+      - "**/*.txt"
+      - "relay/check.mjs"
+      - "js/crowdlock.mjs"
+      # The inbox's own frequent commits change only data; they don't need it.
+      - "!**/registrations.json"
+      - "!**/commitments/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: node relay/check.mjs

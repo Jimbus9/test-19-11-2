@@ -1,0 +1,405 @@
+// Reading and checking a Crowdlock's own file.
+//
+// Every Crowdlock publishes its parameters in one file, crowdlocks/<name>.json.
+// Nothing about any particular Crowdlock — its declaration, its co-signer, its
+// minimums — is written into the code. The code reads the file it is pointed
+// at, so the same register page and the same lock tools serve every Crowdlock
+// alike, including The Kop Fund's.
+//
+// Everything here is a pure check: no network, no keys, no signing. It runs
+// unchanged in a browser and in Node.
+//
+// See spec/running-your-own.md for what each parameter means.
+
+import { sha256 } from "./vendor/noble-hashes/sha256.js";
+import { memberAddressForOwnerKey, verifyMembership } from "./verify.mjs";
+
+const HASH = /^[0-9a-f]{64}$/;
+const PUBKEY = /^0[23][0-9a-f]{64}$/; // compressed only, as the lock format requires
+// A BIP32 extended public key: xpub on Bitcoin, tpub on its test networks.
+const XPUB = /^[xt]pub[1-9A-HJ-NP-Za-km-z]{107}$/;
+const NETWORKS = ["mainnet", "testnet4", "signet", "regtest"];
+
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+// Where a Crowdlock lives. A copy of a Crowdlock's file put up at
+// another address would show the real one's locks under its own name. So a
+// Crowdlock may say where it lives, `home`, and then EVERY one of its co-signer
+// keys must have signed that: a standard Bitcoin Signed Message by the key's
+// address over homeLine (network, link and declaration). A copy can't get the
+// real co-signer key's signature over its own address, so a copy that lists
+// the real key fails; one that drops the real key counts none of the real
+// locks; and one that keeps the real `home` sends a reader to the real one.
+// (Were one key's signature enough, a copy could list the real key beside one
+// of its own, and sign with its own.)
+
+const HRP = { mainnet: "bc", testnet4: "tb", testnet: "tb", signet: "tb", regtest: "bcrt" };
+
+/** The line each co-signer key signs to say where this Crowdlock lives. */
+export function homeLine(network, url, fingerprint) {
+  return `crowdlock-home|${network}|${url}|${fingerprint}`;
+}
+
+/** Does this key's signature say this Crowdlock lives at `url`? */
+export function homeSignatureChecks(c, url, key, signature) {
+  const hrp = HRP[c?.network];
+  if (!hrp) return false;
+  return verifyMembership({ address: memberAddressForOwnerKey(String(key).toLowerCase(), hrp), signature, message: homeLine(c.network, url, c.declaration?.sha256), hrp }).valid;
+}
+
+/** Is a Crowdlock file's `home` well made, and signed by every one of its co-signer keys? */
+export function checkHome(c) {
+  const h = c?.home;
+  const problems = [];
+  if (!h || typeof h !== "object") return { ok: false, problems: ["home must be an object with url and signatures"] };
+  if (!(typeof h.url === "string" && /^https:\/\/[^\s]+$/.test(h.url) && h.url.length <= 300)) problems.push("home.url must be the https:// link to this Crowdlock's file");
+  const sigs = h.signatures && typeof h.signatures === "object" && !Array.isArray(h.signatures) ? h.signatures : null;
+  if (!sigs) problems.push("home.signatures must name each co-signer key with its signature");
+  if (problems.length) return { ok: false, problems };
+  for (const k of c.cosigner_keys ?? []) {
+    const key = String(k).toLowerCase();
+    if (typeof sigs[key] !== "string") problems.push(`home is not signed by co-signer key ${key.slice(0, 10)}…: every co-signer key must sign where it lives`);
+    else if (!homeSignatureChecks(c, h.url, key, sigs[key])) problems.push(`home's signature by ${key.slice(0, 10)}… doesn't check: it wasn't made by that key over this network, link and declaration`);
+  }
+  for (const k of Object.keys(sigs)) if (!(c.cosigner_keys ?? []).map((x) => String(x).toLowerCase()).includes(k.toLowerCase())) problems.push(`home is signed by ${k.slice(0, 10)}…, which is not one of this Crowdlock's co-signer keys`);
+  return { ok: problems.length === 0, problems };
+}
+
+/** The highest fee limit any Crowdlock may set: 5% of what a commitment pays. */
+export const MAX_FEE_LIMIT = 0.05;
+
+/** The declaration's canonical form: UTF-8, NFC, LF, no trailing whitespace, one trailing newline. */
+
+export function canonicalise(raw) {
+  return raw.normalize("NFC").replace(/\r\n?/g, "\n").split("\n")
+    .map((l) => l.replace(/[ \t]+$/, ""))
+    .join("\n").replace(/\n+$/, "") + "\n";
+}
+
+/** SHA-256 of the canonical declaration. This is the Crowdlock's identity. */
+export function declarationHash(text) {
+  return hex(sha256(new TextEncoder().encode(canonicalise(text))));
+}
+
+// ---------------------------------------------------------------------------
+// Versions of the declaration (spec/registration-format.md, "Versioning")
+//
+// `declaration` is the founding version, and its fingerprint is the
+// Crowdlock's identity for good: the destinations list begins with it and
+// every relay record is tagged with it, so neither restarts when a new
+// version is published. Later versions are listed, oldest first, in
+// `declaration_versions`; the last one listed is current. A member's
+// signature is bound to the version it names and is never read as agreeing
+// to any other.
+// ---------------------------------------------------------------------------
+
+/** Every version of the declaration, oldest first: [{ version, title, file, sha256, published?, reason? }]. */
+export function versionsOf(c) {
+  const first = c?.declaration ?? {};
+  const later = Array.isArray(c?.declaration_versions) ? c.declaration_versions : [];
+  return [first, ...later].map((d) => ({ ...d, title: d.title ?? first.title }));
+}
+
+/** The version new members sign: the newest listed. */
+export function currentVersion(c) {
+  const all = versionsOf(c);
+  return all[all.length - 1];
+}
+
+/** One version by its number, or undefined. */
+export function versionOf(c, version) {
+  return versionsOf(c).find((d) => d.version === version);
+}
+
+/**
+ * The one line a member signs. Same shape for every Crowdlock and every
+ * version; only the title, version and hash differ. With no version given,
+ * the current one: the line a new member signs to join.
+ */
+export function membershipStatement(c, version) {
+  const d = version === undefined ? currentVersion(c) : versionOf(c, version);
+  if (!d) throw new Error(`this Crowdlock has no version ${version} of its declaration`);
+  return `I agree to the ${d.title} v${d.version} (sha256:${d.sha256}) and join as a member.`;
+}
+
+/** The version a member joined with: the founding one unless their record says otherwise. */
+export function joinedVersion(c, member) {
+  return Number.isInteger(member?.version) ? member.version : c.declaration.version;
+}
+
+/** Every version a member has signed, in the order of the versions. */
+export function signedVersions(c, member) {
+  const set = new Set([joinedVersion(c, member), ...(Array.isArray(member?.also_signed) ? member.also_signed.map((x) => x.version) : [])]);
+  return versionsOf(c).map((d) => d.version).filter((v) => set.has(v));
+}
+
+/** Has this member signed this version? */
+export function hasSigned(c, member, version) {
+  return signedVersions(c, member).includes(version);
+}
+
+/**
+ * Check a Crowdlock file is complete and coherent.
+ * Pass `declarationText` to also check the declaration really hashes to what the file says,
+ * and `versionTexts` ({ 2: text, … }) to check later versions' texts the same way.
+ * Returns { ok, problems }.
+ */
+export function checkCrowdlock(c, { declarationText, versionTexts } = {}) {
+  const problems = [];
+  const need = (cond, msg) => { if (!cond) problems.push(msg); };
+  const posInt = (v) => Number.isInteger(v) && v > 0;
+
+  need(c && typeof c === "object", "the file is not a JSON object");
+  if (problems.length) return { ok: false, problems };
+
+  need(c.format === 1, "format must be 1");
+  need(typeof c.name === "string" && c.name.trim() !== "", "name is missing");
+
+  const d = c.declaration ?? {};
+  need(typeof d.title === "string" && d.title.trim() !== "", "declaration.title is missing");
+  need(!/[()\n]/.test(d.title ?? ""), "declaration.title may not contain brackets or a newline — it goes inside the signed statement");
+  need(posInt(d.version), "declaration.version must be a whole number from 1");
+  need(typeof d.file === "string" && d.file !== "", "declaration.file is missing");
+  need(HASH.test(d.sha256 ?? ""), "declaration.sha256 must be 64 lowercase hex characters");
+  if (declarationText !== undefined && HASH.test(d.sha256 ?? "")) {
+    const got = declarationHash(declarationText);
+    need(got === d.sha256, `the declaration hashes to ${got.slice(0, 12)}…, but the file says ${d.sha256.slice(0, 12)}…`);
+  }
+
+  // Later versions, if any. Each must follow the one before, name its own
+  // text, and say when and why it was published: members are asked to sign
+  // it, and the reason is what they are shown first.
+  if (c.declaration_versions !== undefined) {
+    const later = c.declaration_versions;
+    need(Array.isArray(later), "declaration_versions, if given, must be a list");
+    if (Array.isArray(later)) {
+      const seen = new Set([d.sha256]);
+      let prev = d.version;
+      later.forEach((v, i) => {
+        const at = `declaration_versions[${i}]`;
+        if (!v || typeof v !== "object") { need(false, `${at} is not an object`); return; }
+        need(Number.isInteger(prev) && v.version === prev + 1, `${at}.version must be ${Number.isInteger(prev) ? prev + 1 : "the next number"}`);
+        prev = v.version;
+        if (v.title !== undefined) {
+          need(typeof v.title === "string" && v.title.trim() !== "" && !/[()\n]/.test(v.title), `${at}.title, if given, must be a title with no brackets or newline`);
+        }
+        need(typeof v.file === "string" && v.file !== "", `${at}.file is missing`);
+        need(HASH.test(v.sha256 ?? ""), `${at}.sha256 must be 64 lowercase hex characters`);
+        need(!seen.has(v.sha256), `${at} has the same text as an earlier version`);
+        seen.add(v.sha256);
+        need(typeof v.published === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.published), `${at}.published must be a date like 2027-01-31`);
+        need(typeof v.reason === "string" && v.reason.trim() !== "" && v.reason.length <= 300 && !/\n/.test(v.reason),
+          `${at}.reason must say in one line, up to 300 characters, why this version exists`);
+        if (versionTexts?.[v.version] !== undefined && HASH.test(v.sha256 ?? "")) {
+          const got = declarationHash(versionTexts[v.version]);
+          need(got === v.sha256, `version ${v.version} of the declaration hashes to ${got.slice(0, 12)}…, but the file says ${v.sha256.slice(0, 12)}…`);
+        }
+      });
+    }
+  }
+
+  need(NETWORKS.includes(c.network), `network must be one of ${NETWORKS.join(", ")}`);
+  need(c.unit === "BTC", "unit must be BTC");
+
+  // Whole years on real bitcoin. A test Crowdlock may offer fractions of a
+  // year — an hour, a day — so a lock can be made and taken home in one sitting.
+  const lengthOk = c.network === "mainnet" ? posInt : (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
+  need(Array.isArray(c.lock_lengths_years) && c.lock_lengths_years.length > 0 && c.lock_lengths_years.every(lengthOk),
+    c.network === "mainnet"
+      ? "lock_lengths_years must be a list of whole numbers of years"
+      : "lock_lengths_years must be a list of positive numbers of years");
+  need(Number.isInteger(c.minimum_counted_lock_sats) && c.minimum_counted_lock_sats >= 0,
+    "minimum_counted_lock_sats must be a whole number of sats");
+
+  for (const k of ["gathering_window_max_days", "settlement_window_max_days"]) {
+    need(posInt(c[k]), `${k} must be a whole number of days`);
+  }
+  // How long a destination must be public before a proposal may name it: the
+  // real protection while there are few attestors. Each Crowdlock chooses its
+  // own (spec/running-your-own.md recommends at least seven days on real
+  // bitcoin); none is allowed, so a test copy can try a proposal at once.
+  need(Number.isInteger(c.destination_wait_days) && c.destination_wait_days >= 0,
+    "destination_wait_days must be a whole number of days");
+
+  for (const k of ["cosigner_keys", "attestor_keys"]) {
+    const keys = c[k];
+    need(Array.isArray(keys), `${k} must be a list (empty until chosen)`);
+    if (!Array.isArray(keys)) continue;
+    keys.forEach((key, i) => need(PUBKEY.test(key), `${k}[${i}] is not a compressed public key`));
+    need(new Set(keys.map((x) => x.slice(2))).size === keys.length, `${k} lists the same key twice`);
+  }
+  if (Array.isArray(c.cosigner_keys) && Array.isArray(c.attestor_keys)) {
+    // Compared on the x-coordinate, so a key's mirror is caught too.
+    const cos = new Set(c.cosigner_keys.map((x) => x.slice(2)));
+    need(!c.attestor_keys.some((x) => cos.has(x.slice(2))),
+      "a key is both co-signer and attestor — the key that approves a destination must never be a key that spends to it");
+  }
+
+  // Optional. Each co-signer key's xpub — the account (m/84'/0'/0' for a key
+  // made the standard way) whose first key, /0/0, is that co-signer key.
+  // Hardware wallets need it: a Ledger will only sign for a lock whose keys it
+  // is given as xpubs, then works out the plain key itself. Only its form is
+  // checked here; that it really makes a listed key is checked by the app and
+  // the repository's tests, which have the arithmetic for it.
+  if (c.cosigner_xpubs !== undefined) {
+    const xs = c.cosigner_xpubs;
+    need(Array.isArray(xs), "cosigner_xpubs must be a list of xpubs");
+    if (Array.isArray(xs)) {
+      xs.forEach((x, i) => need(XPUB.test(x), `cosigner_xpubs[${i}] is not an xpub`));
+      need(new Set(xs).size === xs.length, "cosigner_xpubs lists the same xpub twice");
+      need(xs.length <= (c.cosigner_keys?.length ?? 0), "cosigner_xpubs has more xpubs than there are co-signer keys");
+    }
+  }
+
+  need(posInt(c.attestor_threshold), "attestor_threshold must be a whole number from 1");
+  if (Array.isArray(c.attestor_keys) && c.attestor_keys.length > 0) {
+    need(c.attestor_threshold <= c.attestor_keys.length, "attestor_threshold is more than the number of attestors");
+  }
+
+  // At most 5%: the fee goes to miners, not the seller, and a Crowdlock that
+  // let a commitment leave half as "fee" would let its co-signer, working
+  // with a miner, take half of what members commit.
+  need(typeof c.max_commitment_fee === "number" && c.max_commitment_fee > 0 && c.max_commitment_fee <= MAX_FEE_LIMIT,
+    `max_commitment_fee must be a fraction above 0 and at most ${MAX_FEE_LIMIT} (5%)`);
+
+  need(typeof c.register?.registrations === "string" && typeof c.register?.destinations === "string",
+    "register must name the registrations and destinations files");
+  // Optional: where the Crowdlock publishes its proposals (method/js/proposals.mjs).
+  need(c.register?.proposals === undefined || (typeof c.register.proposals === "string" && /\.json$/.test(c.register.proposals)),
+    "register.proposals, if given, must name a .json file");
+  need(typeof c.chain_api === "string" && /^https:\/\//.test(c.chain_api), "chain_api must be an https address");
+  // Optional. Where this Crowdlock accepts signed registrations. Leaving it out
+  // is allowed — joining by pull request needs no endpoint — but if it is
+  // given it must be a plain https address, because clients post signatures
+  // to it and an app reads it straight from this file.
+  // lock_endpoint is the same idea for locks: optional, https if given.
+  for (const k of ["join_endpoint", "lock_endpoint"]) {
+    if (c[k] !== undefined) {
+      need(typeof c[k] === "string" && /^https:\/\/[^\s]+$/.test(c[k]) && c[k].length <= 200,
+        `${k}, if given, must be an https address`);
+    }
+  }
+
+  // Optional. The page to send people to when this Crowdlock is shared — its
+  // front page or joining page. Without it, apps share the site the file
+  // sits in.
+  if (c.site !== undefined) {
+    need(typeof c.site === "string" && /^https:\/\/[^\s]+$/.test(c.site) && c.site.length <= 200, "site, if given, must be an https address");
+  }
+
+  // Optional. Public Nostr relays where members post signed registrations and
+  // locks, for the Crowdlock's own repository to collect (method/js/inbox.mjs). No
+  // account, no server and no key of anybody's sits in that path.
+  if (c.relays !== undefined) {
+    need(Array.isArray(c.relays) && c.relays.length > 0 && c.relays.length <= 10
+      && c.relays.every((r) => typeof r === "string" && /^wss:\/\/[^\s]+$/.test(r) && r.length <= 200),
+      "relays, if given, must be a list of up to 10 wss:// addresses");
+  }
+  // Optional, published in advance: relays that replace a live one which has
+  // been silent for 7 days (method/relay/inbox.mjs). Chosen now, in public, so nobody
+  // picks a relay on the day.
+  if (c.spare_relays !== undefined) {
+    need(Array.isArray(c.relays), "spare_relays needs relays");
+    need(Array.isArray(c.spare_relays) && c.spare_relays.length <= 10
+      && c.spare_relays.every((r) => typeof r === "string" && /^wss:\/\/[^\s]+$/.test(r) && r.length <= 200),
+      "spare_relays, if given, must be a list of up to 10 wss:// addresses");
+    if (Array.isArray(c.relays) && Array.isArray(c.spare_relays)) {
+      need(!c.spare_relays.some((r) => c.relays.includes(r)), "a relay is listed as both live and spare");
+    }
+  }
+
+  if (c.home !== undefined && !problems.length) problems.push(...checkHome(c).problems);
+
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * Check a Crowdlock's register files agree with its own file. Catches the two
+ * drifting apart — a register naming one declaration while the Crowdlock names
+ * another. Returns { ok, problems }.
+ */
+export function checkRegisterFiles(c, { registrations, destinations }) {
+  const problems = [];
+  const need = (cond, msg) => { if (!cond) problems.push(msg); };
+
+  if (registrations) {
+    need(registrations.declaration?.sha256 === c.declaration.sha256,
+      "the registrations file names a different declaration from this Crowdlock");
+    // The registrations file names the founding declaration: its identity.
+    if (registrations.declaration?.statement !== undefined) {
+      need(registrations.declaration.statement === membershipStatement(c, c.declaration.version),
+        "the registrations file's signing statement is not this Crowdlock's");
+    }
+    // Every version a member is recorded as signing must be one this
+    // Crowdlock publishes.
+    const known = new Set(versionsOf(c).map((v) => v.version));
+    for (const m of Array.isArray(registrations.members) ? registrations.members : []) {
+      if (m.version !== undefined) need(known.has(m.version), `member ${m.n} is recorded as joining with version ${m.version}, which this Crowdlock does not publish`);
+      for (const x of Array.isArray(m.also_signed) ? m.also_signed : []) {
+        need(known.has(x?.version), `member ${m.n} is recorded as signing version ${x?.version}, which this Crowdlock does not publish`);
+      }
+    }
+  }
+  if (destinations) {
+    need(destinations.instance === c.declaration.sha256,
+      "the destinations file belongs to a different Crowdlock");
+    need(destinations.minimum_age_days === c.destination_wait_days,
+      "the destinations file's waiting period disagrees with destination_wait_days");
+    need(destinations.threshold === c.attestor_threshold,
+      "the destinations file's threshold disagrees with attestor_threshold");
+    // The attestors are the Crowdlock file's (attestor_keys). The list repeats
+    // them as addresses, and the two must agree: a list that could name its
+    // own attestors could approve its own destinations.
+    if (Array.isArray(c.attestor_keys) && c.attestor_keys.every((k) => PUBKEY.test(k))) {
+      const hrp = { mainnet: "bc", regtest: "bcrt" }[c.network] ?? "tb";
+      const named = c.attestor_keys.map((k) => memberAddressForOwnerKey(k, hrp)).sort();
+      const listed = (Array.isArray(destinations.attestors) ? destinations.attestors : []).map(String).sort();
+      need(JSON.stringify(named) === JSON.stringify(listed),
+        "the destinations file's attestors are not the ones the Crowdlock's file names (attestor_keys)");
+    }
+    // Every entry was attested for one Crowdlock, named in the entry itself.
+    for (const e of Array.isArray(destinations.entries) ? destinations.entries : []) {
+      need(e?.instance === c.declaration.sha256, `destination entry ${e?.index} was attested for a different Crowdlock`);
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * Check several Crowdlocks published side by side can never be confused.
+ *
+ * Two may not share a declaration (that is their identity), and two may not
+ * share a co-signer key: a lock is counted by whichever Crowdlock names its
+ * co-signer, so a shared key would let one coin be counted twice.
+ * Returns { ok, problems }.
+ */
+export function checkSeparate(crowdlocks) {
+  const problems = [];
+  const seenDecl = new Map();
+  const seenKey = new Map();
+  for (const c of crowdlocks) {
+    const other = seenDecl.get(c.declaration?.sha256);
+    if (other) problems.push(`${c.name} and ${other} share a declaration`);
+    else seenDecl.set(c.declaration?.sha256, c.name);
+
+    for (const k of c.cosigner_keys ?? []) {
+      const x = k.slice(2);
+      const owner = seenKey.get(x);
+      if (owner && owner !== c.name) problems.push(`${c.name} and ${owner} share a co-signer key`);
+      else seenKey.set(x, c.name);
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * Does a lock with this co-signer key belong to this Crowdlock? The key must
+ * be one the file names, exactly, not just its x-coordinate: a lock naming a
+ * key's mirror image (02… for 03…) is not this Crowdlock's. It is a different
+ * lock: the co-signer's words do not make that key, so no tool here could
+ * ever complete a commitment from it, yet it counted toward a target.
+ */
+export function isCosignerOf(c, cosignerPubkeyHex) {
+  const key = String(cosignerPubkeyHex).toLowerCase();
+  return (c.cosigner_keys ?? []).some((k) => String(k).toLowerCase() === key);
+}

@@ -4,6 +4,8 @@
   "updated": "2026-11-19",
   "minimum_age_days": 0,
   "threshold": 1,
-  "attestors": [],
+  "attestors": [
+    "tb1q63zju9hpvfqhu8mw4wr8fqq800zt9jycx97lsz"
+  ],
   "entries": []
 }

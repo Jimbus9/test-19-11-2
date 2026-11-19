@@ -27,7 +27,9 @@
   "gathering_window_max_days": 28,
   "settlement_window_max_days": 14,
   "destination_wait_days": 0,
-  "attestor_keys": [],
+  "attestor_keys": [
+    "03f6772b0b5bd170a3e87674e9996cb974fedcc9711659c374b0141598a4ebe7cd"
+  ],
   "attestor_threshold": 1,
   "max_commitment_fee": 0.01,
   "register": {

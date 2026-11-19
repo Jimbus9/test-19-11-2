@@ -4,6 +4,13 @@
     "sha256": "d0797a708f4ce82e7e0505da58ad1009065bd4784139672ecf3c9db7f4d77dc6",
     "statement": "I agree to the OUR DECLARATION HXCHCHC — test copy v1 (sha256:d0797a708f4ce82e7e0505da58ad1009065bd4784139672ecf3c9db7f4d77dc6) and join as a member."
   },
-  "members": [],
+  "members": [
+    {
+      "n": 1,
+      "address": "tb1q63zju9hpvfqhu8mw4wr8fqq800zt9jycx97lsz",
+      "signature": "IB14n9x5GxQp1cBkycaT+0lDv7CrAZ9lVC9RmP7yP/SmeNgC8POyyl4FzUmobWTQaFCbVIZzNVAVpJXcY1QbPBI=",
+      "signed": "2026-11-19"
+    }
+  ],
   "locks": []
 }

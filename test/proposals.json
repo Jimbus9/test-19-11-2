@@ -17,6 +17,22 @@
         "rate": "1 BTC = 5555.56 GBP",
         "at": "2026-11-19T18:24:37Z"
       }
+    },
+    {
+      "title": "Testing proposal dead",
+      "text": "Testing to see if a proposal can be declared dead",
+      "destination": "tb1q63zju9hpvfqhu8mw4wr8fqq800zt9jycx97lsz",
+      "requires": 1000,
+      "currency": "GBP",
+      "opens": "2026-11-20T01:35:45Z",
+      "closes": "2026-11-21T01:35:45Z",
+      "settles_by": "2026-11-22T01:35:45Z",
+      "hash": "d57ec61710bf37b6e8a51f4d83b98762ea2185c1653c68737cfcf22b9fbe4682",
+      "target": {
+        "sats": 100000000,
+        "rate": "1 BTC = 10.00 GBP",
+        "at": "2026-11-20T01:35:45Z"
+      }
     }
   ]
 }

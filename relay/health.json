@@ -1,23 +1,23 @@
 {
   "test-19-11-2-test.json": {
     "wss://relay.damus.io": {
-      "lastAnswered": "2026-11-20",
+      "lastAnswered": "2026-11-21",
       "since": "2026-11-19"
     },
     "wss://nos.lol": {
-      "lastAnswered": "2026-11-20",
+      "lastAnswered": "2026-11-21",
       "since": "2026-11-19"
     },
     "wss://relay.primal.net": {
-      "lastAnswered": "2026-11-20",
+      "lastAnswered": "2026-11-21",
       "since": "2026-11-19"
     },
     "wss://nostr.mom": {
-      "lastAnswered": "2026-11-20",
+      "lastAnswered": "2026-11-21",
       "since": "2026-11-19"
     },
     "wss://offchain.pub": {
-      "lastAnswered": "2026-11-20",
+      "lastAnswered": "2026-11-21",
       "since": "2026-11-19"
     }
   }
